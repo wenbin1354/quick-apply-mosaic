@@ -162,7 +162,57 @@ const translations = {
 } as const
 
 type Locale = keyof typeof translations
-type UIText = (typeof translations)["zh"]
+
+interface UIText {
+  appTitle: string
+  language: string
+  languageZh: string
+  languageEn: string
+  uploadImages: string
+  downloadPrefix: string
+  brushSize: string
+  mosaicBlockSize: string
+  processing: string
+  processAllImages: string
+  downloadAll: string
+  ordered: string
+  clearAll: string
+  progressTitle: string
+  progressLabel: string
+  statusMosaicApplied: string
+  statusProcessing: string
+  statusNoBrushStrokes: string
+  statusWaiting: string
+  processingComplete: string
+  processingSummary: (completed: number, skipped: number, total: number) => string
+  downloadInfo: string
+  downloadInfoLine1: string
+  downloadInfoLine2: string
+  downloadInfoLine3: string
+  downloadInfoLine4: string
+  dropImagesHere: string
+  uploadToStart: string
+  dragAndDropHint: string
+  brushHint: string
+  dropToUpload: string
+  zoom: string
+  loadingImage: string
+  brushStrokes: string
+  paintHint: string
+  mobileTip: string
+  removeMetadata: string
+  removeMetadataHint: string
+  brushCount: string
+  readyToProcess: string
+  downloading: string
+  downloadReady: string
+  metadataEnabled: string
+  metadataDisabled: string
+  moveUp: string
+  moveDown: string
+  clearStroke: string
+  deleteImage: string
+}
 
 const sanitizeImageDataLSB = (data: Uint8ClampedArray) => {
   for (let i = 0; i < data.length; i += 4) {
@@ -195,7 +245,7 @@ export default function MosaicFilterApp() {
 
   const [isDragOver, setIsDragOver] = useState(false)
 
-  const text = translations[locale]
+  const text: UIText = translations[locale]
 
   useEffect(() => {
     const savedLocale = window.localStorage.getItem("mosaic-locale")
