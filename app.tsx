@@ -13,6 +13,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
 import { Slider } from "@/components/ui/slider"
+import { buildDownloadFileName } from "@/lib/download"
+import { localeToHtmlLang, resolveInitialLocale, type Locale } from "@/lib/locale"
+import { sanitizeImageDataLSB } from "@/lib/sanitize"
 
 import {
   Upload,
@@ -107,6 +110,11 @@ const translations = {
     moveDown: "下移",
     clearStroke: "清除涂抹",
     deleteImage: "删除图片",
+    chooseImages: "选择图片",
+    uploadHint: "可多选，支持拖拽上传",
+    showControls: "展开控制面板",
+    hideControls: "收起控制面板",
+    quickActions: "快捷操作",
   },
   en: {
     appTitle: "Batch Mosaic Tool - Brush Mode",
@@ -158,10 +166,13 @@ const translations = {
     moveDown: "Move Down",
     clearStroke: "Clear Strokes",
     deleteImage: "Delete Image",
+    chooseImages: "Choose Images",
+    uploadHint: "Multiple selection supported, drag and drop is available",
+    showControls: "Show Controls",
+    hideControls: "Hide Controls",
+    quickActions: "Quick Actions",
   },
 } as const
-
-type Locale = keyof typeof translations
 
 interface UIText {
   appTitle: string
@@ -212,14 +223,11 @@ interface UIText {
   moveDown: string
   clearStroke: string
   deleteImage: string
-}
-
-const sanitizeImageDataLSB = (data: Uint8ClampedArray) => {
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = data[i] & 0b11111110
-    data[i + 1] = data[i + 1] & 0b11111110
-    data[i + 2] = data[i + 2] & 0b11111110
-  }
+  chooseImages: string
+  uploadHint: string
+  showControls: string
+  hideControls: string
+  quickActions: string
 }
 
 export default function MosaicFilterApp() {
@@ -241,6 +249,8 @@ export default function MosaicFilterApp() {
 
   const [isDownloading, setIsDownloading] = useState(false)
 
+  const [showControlsMobile, setShowControlsMobile] = useState(false)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [isDragOver, setIsDragOver] = useState(false)
@@ -249,17 +259,12 @@ export default function MosaicFilterApp() {
 
   useEffect(() => {
     const savedLocale = window.localStorage.getItem("mosaic-locale")
-    if (savedLocale === "zh" || savedLocale === "en") {
-      setLocale(savedLocale)
-      return
-    }
-
-    setLocale(window.navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en")
+    setLocale(resolveInitialLocale(savedLocale, window.navigator.language))
   }, [])
 
   useEffect(() => {
     window.localStorage.setItem("mosaic-locale", locale)
-    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en"
+    document.documentElement.lang = localeToHtmlLang(locale)
   }, [locale])
 
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -613,7 +618,6 @@ export default function MosaicFilterApp() {
     try {
       for (let index = 0; index < sortedImages.length; index++) {
         const image = sortedImages[index]
-        const paddedOrder = image.order.toString().padStart(3, "0")
         const sourceUrl = image.processedUrl || image.originalUrl
 
         let outputBlob = await fetchBlobFromObjectUrl(sourceUrl)
@@ -621,10 +625,13 @@ export default function MosaicFilterApp() {
           outputBlob = await sanitizeBlob(outputBlob)
         }
 
-        const extension = removeMetadataEnabled || image.processedUrl ? "png" : image.file.name.split(".").pop() || "png"
-        const fileName = image.processedUrl
-          ? `${downloadPrefix}_${paddedOrder}.${extension}`
-          : `${downloadPrefix}_original_${paddedOrder}.${extension}`
+        const fileName = buildDownloadFileName(
+          downloadPrefix,
+          image.order,
+          Boolean(image.processedUrl),
+          removeMetadataEnabled,
+          image.file.name,
+        )
 
         triggerDownload(outputBlob, fileName)
 
@@ -697,7 +704,7 @@ export default function MosaicFilterApp() {
 
   return (
     <div
-      className={`min-h-screen p-4 transition-colors duration-200 ${
+      className={`min-h-screen p-4 pb-36 md:pb-4 transition-colors duration-200 ${
         isDragOver ? "bg-blue-100 border-4 border-dashed border-blue-400" : "bg-gray-50"
       }`}
       onDragOver={handleDragOver}
@@ -707,13 +714,25 @@ export default function MosaicFilterApp() {
       <div className="max-w-7xl mx-auto">
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Brush className="w-6 h-6" />
-              {text.appTitle}
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="flex items-center gap-2 min-w-0">
+                <Brush className="w-6 h-6 shrink-0" />
+                <span className="truncate">{text.appTitle}</span>
+              </CardTitle>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="md:hidden"
+                onClick={() => setShowControlsMobile((prev) => !prev)}
+              >
+                {showControlsMobile ? text.hideControls : text.showControls}
+              </Button>
+            </div>
           </CardHeader>
 
-          <CardContent className="space-y-4">
+          <CardContent className={`space-y-4 ${showControlsMobile ? "block" : "hidden md:block"}`}>
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {text.mobileTip}
             </div>
@@ -735,14 +754,24 @@ export default function MosaicFilterApp() {
               <div className="flex-1 min-w-[200px]">
                 <Label htmlFor="file-upload">{text.uploadImages}</Label>
 
-                <Input
-                  id="file-upload"
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  ref={fileInputRef}
-                />
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <Input
+                    id="file-upload"
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    onChange={handleFileUpload}
+                    ref={fileInputRef}
+                    className="max-w-[260px] cursor-pointer"
+                  />
+
+                  <Button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2">
+                    <Upload className="w-4 h-4" />
+                    {text.chooseImages}
+                  </Button>
+                </div>
+
+                <p className="text-xs text-gray-500 mt-1">{text.uploadHint}</p>
               </div>
 
               <div className="min-w-[200px]">
@@ -804,38 +833,40 @@ export default function MosaicFilterApp() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <Button
-                onClick={processAllImages}
-                disabled={!hasImages || isProcessing}
-                className="flex items-center gap-2"
-              >
-                {isProcessing
-                  ? `${text.processing} ${processingProgress.current}/${processingProgress.total}...`
-                  : text.processAllImages}
-              </Button>
+            <div className="hidden md:block sticky top-2 z-30 bg-white/95 backdrop-blur border border-gray-200 rounded-lg p-2 shadow-sm">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={processAllImages}
+                  disabled={!hasImages || isProcessing}
+                  className="flex items-center gap-2"
+                >
+                  {isProcessing
+                    ? `${text.processing} ${processingProgress.current}/${processingProgress.total}...`
+                    : text.processAllImages}
+                </Button>
 
-              <Button
-                onClick={downloadAllImages}
-                disabled={!hasImages || isDownloading}
-                variant="outline"
-                className="flex items-center gap-2 bg-transparent"
-              >
-                <Download className="w-4 h-4" />
-                {isDownloading
-                  ? `${text.downloading}...`
-                  : `${text.downloadAll} (${images.length}) - ${text.ordered}`}
-              </Button>
+                <Button
+                  onClick={downloadAllImages}
+                  disabled={!hasImages || isDownloading}
+                  variant="outline"
+                  className="flex items-center gap-2 bg-transparent"
+                >
+                  <Download className="w-4 h-4" />
+                  {isDownloading
+                    ? `${text.downloading}...`
+                    : `${text.downloadAll} (${images.length}) - ${text.ordered}`}
+                </Button>
 
-              <Button
-                onClick={clearAllImages}
-                disabled={images.length === 0}
-                variant="outline"
-                className="flex items-center gap-2 bg-transparent"
-              >
-                <Trash2 className="w-4 h-4" />
-                {text.clearAll}
-              </Button>
+                <Button
+                  onClick={clearAllImages}
+                  disabled={images.length === 0}
+                  variant="outline"
+                  className="flex items-center gap-2 bg-transparent"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {text.clearAll}
+                </Button>
+              </div>
             </div>
 
             {/* Progress Log */}
@@ -953,7 +984,7 @@ export default function MosaicFilterApp() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10 md:mb-0">
           {sortedImages.map((image) => (
             <ImageEditor
               key={image.id}
@@ -971,7 +1002,10 @@ export default function MosaicFilterApp() {
         </div>
 
         {images.length === 0 && (
-          <Card className={`transition-all duration-200 ${isDragOver ? "border-blue-400 bg-blue-50" : ""}`}>
+          <Card
+            className={`transition-all duration-200 cursor-pointer ${isDragOver ? "border-blue-400 bg-blue-50" : ""}`}
+            onClick={() => fileInputRef.current?.click()}
+          >
             <CardContent className="text-center py-12">
               <Upload className={`w-12 h-12 mx-auto mb-4 ${isDragOver ? "text-blue-500" : "text-gray-400"}`} />
 
@@ -982,6 +1016,18 @@ export default function MosaicFilterApp() {
               <p className="text-sm text-gray-400 mt-2">{text.dragAndDropHint}</p>
 
               <p className="text-xs text-gray-400 mt-1">{text.brushHint}</p>
+
+              <Button
+                type="button"
+                className="mt-4"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  fileInputRef.current?.click()
+                }}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                {text.chooseImages}
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -995,6 +1041,35 @@ export default function MosaicFilterApp() {
             </div>
           </div>
         )}
+
+        <div className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-gray-200 bg-white/95 backdrop-blur px-3 py-2">
+          <p className="text-[11px] text-gray-500 mb-2">{text.quickActions}</p>
+          <div className="grid grid-cols-3 gap-2">
+            <Button type="button" size="sm" onClick={() => fileInputRef.current?.click()}>
+              <Upload className="w-4 h-4 mr-1" />
+              {text.chooseImages}
+            </Button>
+
+            <Button
+              size="sm"
+              onClick={processAllImages}
+              disabled={!hasImages || isProcessing}
+              className="flex items-center justify-center"
+            >
+              {text.processAllImages}
+            </Button>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={downloadAllImages}
+              disabled={!hasImages || isDownloading}
+              className="bg-transparent"
+            >
+              {text.downloadAll}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -1049,6 +1124,8 @@ function ImageEditor({
 
   const [zoom, setZoom] = useState([100])
 
+  const sourceUrl = image.processedUrl || image.originalUrl
+
   useEffect(() => {
     const container = canvasContainerRef.current
     if (!container) return
@@ -1075,9 +1152,7 @@ function ImageEditor({
 
     const ctx = canvas.getContext("2d")
 
-    const overlayCtx = overlayCanvas.getContext("2d")
-
-    if (!ctx || !overlayCtx) return
+    if (!ctx) return
 
     const img = new Image()
 
@@ -1112,6 +1187,10 @@ function ImageEditor({
 
       displayHeight = (displayHeight * zoom[0]) / 100
 
+      displayWidth = Math.max(1, Math.round(displayWidth))
+
+      displayHeight = Math.max(1, Math.round(displayHeight))
+
       canvas.width = displayWidth
 
       canvas.height = displayHeight
@@ -1128,17 +1207,11 @@ function ImageEditor({
 
       ctx.drawImage(img, 0, 0, displayWidth, displayHeight)
 
-      // Clear overlay and draw brush strokes
-
-      overlayCtx.clearRect(0, 0, displayWidth, displayHeight)
-
-      drawBrushStrokes(overlayCtx, displayWidth, displayHeight, img.width, img.height)
-
       setImageLoaded(true)
     }
 
-    img.src = image.processedUrl || image.originalUrl
-  }, [image, zoom, containerWidth])
+    img.src = sourceUrl
+  }, [sourceUrl, zoom, containerWidth])
 
   const drawBrushStrokes = useCallback(
     (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, imgWidth: number, imgHeight: number) => {
@@ -1175,6 +1248,7 @@ function ImageEditor({
   )
 
   useEffect(() => {
+    setImageLoaded(false)
     drawImage()
   }, [drawImage])
 
@@ -1232,6 +1306,11 @@ function ImageEditor({
     },
     [brushSize, canvasScale.x, canvasScale.y, drawBrushStrokes],
   )
+
+  useEffect(() => {
+    if (!imageLoaded) return
+    drawOverlay()
+  }, [drawOverlay, imageLoaded])
 
   const drawBrushPreview = useCallback(
     (clientX: number, clientY: number) => {
@@ -1379,12 +1458,12 @@ function ImageEditor({
     <Card>
       <CardHeader className="pb-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
             <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">#{image.order}</span>
 
-            <CardTitle className="text-sm truncate min-w-0">{image.file.name}</CardTitle>
+            <CardTitle className="text-sm truncate min-w-0 flex-1">{image.file.name}</CardTitle>
 
-            {getStatusIcon()}
+            <span className="shrink-0">{getStatusIcon()}</span>
           </div>
 
           <div className="flex gap-1 flex-wrap justify-end shrink-0">

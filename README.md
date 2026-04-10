@@ -1,5 +1,7 @@
 # Quick Apply Mosaic
 
+[![Deploy to GitHub Pages](https://github.com/wenbin1354/quick-apply-mosaic/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/wenbin1354/quick-apply-mosaic/actions/workflows/deploy-pages.yml)
+
 Batch image mosaic editor with brush masking, drag-and-drop upload, ordering controls, and optional metadata stripping on download.
 
 ## Features
@@ -53,6 +55,15 @@ In your GitHub repository settings:
 2. Set **Source** to **GitHub Actions**
 
 After that, pushing to `main` auto-deploys.
+
+## Release checklist
+
+- Run `npm run lint`
+- Run `npm run build`
+- Verify language auto-detect and manual language switch
+- Verify batch process + download order behavior
+- Push to `main` and confirm GitHub Actions deployment is green
+- Open the Pages URL and do a quick mobile layout sanity check
 
 ## Notes
 
