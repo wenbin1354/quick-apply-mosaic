@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useRef, useCallback, useEffect } from "react"
+import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -15,7 +15,9 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { buildDownloadFileName } from "@/lib/download"
 import { localeToHtmlLang, resolveInitialLocale, type Locale } from "@/lib/locale"
+import { LANDSCAPE_ROW_SIZE, NON_LANDSCAPE_ROW_SIZE, type AspectToken } from "@/lib/row-rules"
 import { sanitizeImageDataLSB } from "@/lib/sanitize"
+import JSZip from "jszip"
 
 import {
   Upload,
@@ -29,6 +31,8 @@ import {
   ArrowUp,
   ArrowDown,
   Sparkles,
+  SlidersHorizontal,
+  X,
 } from "lucide-react"
 
 interface ImageData {
@@ -115,6 +119,13 @@ const translations = {
     showControls: "展开控制面板",
     hideControls: "收起控制面板",
     quickActions: "快捷操作",
+    quickUpload: "上传",
+    quickProcess: "处理",
+    quickDownload: "下载",
+    quickControls: "面板",
+    aspectLandscape: "横图",
+    aspectPortrait: "竖图",
+    aspectSquare: "方图",
   },
   en: {
     appTitle: "Batch Mosaic Tool - Brush Mode",
@@ -171,6 +182,13 @@ const translations = {
     showControls: "Show Controls",
     hideControls: "Hide Controls",
     quickActions: "Quick Actions",
+    quickUpload: "Upload",
+    quickProcess: "Process",
+    quickDownload: "Download",
+    quickControls: "Controls",
+    aspectLandscape: "Landscape",
+    aspectPortrait: "Portrait",
+    aspectSquare: "Square",
   },
 } as const
 
@@ -228,6 +246,24 @@ interface UIText {
   showControls: string
   hideControls: string
   quickActions: string
+  quickUpload: string
+  quickProcess: string
+  quickDownload: string
+  quickControls: string
+  aspectLandscape: string
+  aspectPortrait: string
+  aspectSquare: string
+}
+
+type AspectType = "landscape" | "portrait" | "square"
+
+interface DesktopRowItem {
+  image: ImageData
+  span: number
+}
+
+interface DesktopRow {
+  items: DesktopRowItem[]
 }
 
 export default function MosaicFilterApp() {
@@ -237,7 +273,7 @@ export default function MosaicFilterApp() {
 
   const [mosaicSize, setMosaicSize] = useState([10])
 
-  const [brushSize, setBrushSize] = useState([20])
+  const [brushSize, setBrushSize] = useState([35])
 
   const [isProcessing, setIsProcessing] = useState(false)
 
@@ -249,7 +285,11 @@ export default function MosaicFilterApp() {
 
   const [isDownloading, setIsDownloading] = useState(false)
 
-  const [showControlsMobile, setShowControlsMobile] = useState(false)
+  const [hasClickedDownload, setHasClickedDownload] = useState(false)
+
+  const [isMobileControlPanelOpen, setIsMobileControlPanelOpen] = useState(false)
+
+  const [imageAspectRatioById, setImageAspectRatioById] = useState<Record<string, number>>({})
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -267,8 +307,52 @@ export default function MosaicFilterApp() {
     document.documentElement.lang = localeToHtmlLang(locale)
   }, [locale])
 
+  useEffect(() => {
+    const validIds = new Set(images.map((image) => image.id))
+    setImageAspectRatioById((prev) => {
+      const nextEntries = Object.entries(prev).filter(([id]) => validIds.has(id))
+      if (nextEntries.length === Object.keys(prev).length) {
+        return prev
+      }
+      return Object.fromEntries(nextEntries)
+    })
+  }, [images])
+
+  useEffect(() => {
+    const missingImages = images.filter((image) => imageAspectRatioById[image.id] == null)
+    if (missingImages.length === 0) {
+      return
+    }
+
+    let isCancelled = false
+
+    missingImages.forEach((image) => {
+      const preview = new Image()
+      preview.onload = () => {
+        if (isCancelled || preview.width <= 0 || preview.height <= 0) {
+          return
+        }
+
+        const ratio = preview.width / preview.height
+        setImageAspectRatioById((prev) => {
+          if (prev[image.id] != null) {
+            return prev
+          }
+          return { ...prev, [image.id]: ratio }
+        })
+      }
+      preview.src = image.originalUrl
+    })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [imageAspectRatioById, images])
+
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || [])
+
+    setHasClickedDownload(false)
 
     setImages((prev) => {
       const newImages = files
@@ -292,6 +376,8 @@ export default function MosaicFilterApp() {
   }, [])
 
   const removeImage = useCallback((id: string) => {
+    setHasClickedDownload(false)
+
     setImages((prev) => {
       const image = prev.find((img) => img.id === id)
 
@@ -312,6 +398,8 @@ export default function MosaicFilterApp() {
   }, [])
 
   const clearAllImages = useCallback(() => {
+    setHasClickedDownload(false)
+
     images.forEach((image) => {
       URL.revokeObjectURL(image.originalUrl)
 
@@ -523,6 +611,8 @@ export default function MosaicFilterApp() {
   )
 
   const processAllImages = useCallback(async () => {
+    setHasClickedDownload(false)
+
     setIsProcessing(true)
 
     setProcessingProgress({ current: 0, total: images.length })
@@ -615,7 +705,38 @@ export default function MosaicFilterApp() {
 
     const sortedImages = [...images].sort((a, b) => a.order - b.order)
 
+    const isMobileViewport = window.matchMedia("(max-width: 767px)").matches
+
     try {
+      if (isMobileViewport && sortedImages.length > 1) {
+        const zip = new JSZip()
+
+        for (let index = 0; index < sortedImages.length; index++) {
+          const image = sortedImages[index]
+          const sourceUrl = image.processedUrl || image.originalUrl
+
+          let outputBlob = await fetchBlobFromObjectUrl(sourceUrl)
+          if (removeMetadataEnabled) {
+            outputBlob = await sanitizeBlob(outputBlob)
+          }
+
+          const fileName = buildDownloadFileName(
+            downloadPrefix,
+            image.order,
+            Boolean(image.processedUrl),
+            removeMetadataEnabled,
+            image.file.name,
+          )
+
+          zip.file(fileName, outputBlob)
+        }
+
+        const zipBlob = await zip.generateAsync({ type: "blob" })
+        triggerDownload(zipBlob, `${downloadPrefix}_batch.zip`)
+        setHasClickedDownload(true)
+        return
+      }
+
       for (let index = 0; index < sortedImages.length; index++) {
         const image = sortedImages[index]
         const sourceUrl = image.processedUrl || image.originalUrl
@@ -637,6 +758,8 @@ export default function MosaicFilterApp() {
 
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
+
+      setHasClickedDownload(true)
     } finally {
       setIsDownloading(false)
     }
@@ -651,6 +774,9 @@ export default function MosaicFilterApp() {
   const completedCount = images.filter((img) => img.status === "completed").length
 
   const skippedCount = images.filter((img) => img.status === "skipped").length
+
+  const progressPercent =
+    processingProgress.total > 0 ? Math.round((processingProgress.current / processingProgress.total) * 100) : 0
 
   const processingComplete = !isProcessing && images.length > 0 && images.every((img) => img.status !== "pending")
 
@@ -674,6 +800,7 @@ export default function MosaicFilterApp() {
     e.preventDefault()
     e.stopPropagation()
     setIsDragOver(false)
+    setHasClickedDownload(false)
 
     const files = Array.from(e.dataTransfer.files)
 
@@ -702,42 +829,127 @@ export default function MosaicFilterApp() {
 
   const sortedImages = [...images].sort((a, b) => a.order - b.order)
 
+  const classifyAspectType = useCallback((ratio?: number): AspectType => {
+    if (!ratio || !Number.isFinite(ratio)) {
+      return "square"
+    }
+
+    const portraitBase = 832 / 1216
+    const landscapeBase = 1216 / 832
+    const squareBase = 1
+    const tolerance = 0.05
+
+    const withinTolerance = (target: number) => Math.abs(ratio - target) / target <= tolerance
+
+    if (withinTolerance(landscapeBase) || ratio > 1.15) {
+      return "landscape"
+    }
+
+    if (withinTolerance(portraitBase) || ratio < 0.87) {
+      return "portrait"
+    }
+
+    if (withinTolerance(squareBase)) {
+      return "square"
+    }
+
+    return ratio > 1 ? "landscape" : "portrait"
+  }, [])
+
+  const getAspectTypeByImageId = useCallback(
+    (imageId: string): AspectType => {
+      const ratio = imageAspectRatioById[imageId]
+      return classifyAspectType(ratio)
+    },
+    [classifyAspectType, imageAspectRatioById],
+  )
+
+  const getAspectTokenByImageId = useCallback(
+    (imageId: string): AspectToken => {
+      const aspectType = getAspectTypeByImageId(imageId)
+      if (aspectType === "landscape") {
+        return "L"
+      }
+      if (aspectType === "square") {
+        return "S"
+      }
+      return "P"
+    },
+    [getAspectTypeByImageId],
+  )
+
+  const desktopRows = useMemo(() => {
+    if (sortedImages.length === 0) {
+      return []
+    }
+
+    const tokens = sortedImages.map((image) => getAspectTokenByImageId(image.id))
+    const rows: DesktopRow[] = []
+    let index = 0
+
+    while (index < sortedImages.length) {
+      const currentToken = tokens[index]
+      const isLandscapeStart = currentToken === "L"
+      let endIndex = index + 1
+
+      if (isLandscapeStart) {
+        endIndex = Math.min(sortedImages.length, index + LANDSCAPE_ROW_SIZE)
+      } else {
+        while (
+          endIndex < sortedImages.length &&
+          tokens[endIndex] !== "L" &&
+          endIndex - index < NON_LANDSCAPE_ROW_SIZE
+        ) {
+          endIndex += 1
+        }
+      }
+
+      const candidate = sortedImages.slice(index, endIndex)
+
+      rows.push({
+        items: candidate.map((image) => ({
+          image,
+          span: getAspectTokenByImageId(image.id) === "L" ? 2 : 1,
+        })),
+      })
+
+      index = endIndex
+    }
+
+    return rows
+  }, [getAspectTokenByImageId, sortedImages])
+
   return (
     <div
-      className={`min-h-screen p-4 pb-36 md:pb-4 transition-colors duration-200 ${
+      className={`min-h-screen p-4 pb-24 md:pb-4 transition-colors duration-200 ${
         isDragOver ? "bg-blue-100 border-4 border-dashed border-blue-400" : "bg-gray-50"
       }`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="max-w-7xl mx-auto">
-        <Card className="mb-6">
-          <CardHeader>
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="flex items-center gap-2 min-w-0">
+      <div className="max-w-7xl mx-auto md:max-w-none md:mx-5">
+        <Card className="mb-6 md:hidden">
+          <CardHeader className="space-y-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <CardTitle className="flex items-center gap-2 min-w-0 flex-1">
                 <Brush className="w-6 h-6 shrink-0" />
                 <span className="truncate">{text.appTitle}</span>
               </CardTitle>
+            </div>
 
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="md:hidden"
-                onClick={() => setShowControlsMobile((prev) => !prev)}
-              >
-                {showControlsMobile ? text.hideControls : text.showControls}
-              </Button>
+            <div className="md:hidden rounded-md bg-blue-50 text-blue-700 text-xs px-3 py-2">
+              {text.mobileTip}
             </div>
           </CardHeader>
 
-          <CardContent className={`space-y-4 ${showControlsMobile ? "block" : "hidden md:block"}`}>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {text.mobileTip}
-            </div>
+          <CardContent className="space-y-4">
+            <div className="hidden md:block space-y-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 break-words">
+                {text.mobileTip}
+              </div>
 
-            <div className="flex flex-wrap gap-4 items-end">
+              <div className="flex flex-wrap gap-4 items-end">
               <div className="min-w-[180px]">
                 <Label htmlFor="locale-select">{text.language}</Label>
                 <select
@@ -751,7 +963,7 @@ export default function MosaicFilterApp() {
                 </select>
               </div>
 
-              <div className="flex-1 min-w-[200px]">
+              <div className="flex-1 min-w-[200px] min-w-0">
                 <Label htmlFor="file-upload">{text.uploadImages}</Label>
 
                 <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -765,13 +977,17 @@ export default function MosaicFilterApp() {
                     className="max-w-[260px] cursor-pointer"
                   />
 
-                  <Button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-2 max-w-full text-xs sm:text-sm"
+                  >
                     <Upload className="w-4 h-4" />
-                    {text.chooseImages}
+                    <span className="truncate">{text.chooseImages}</span>
                   </Button>
                 </div>
 
-                <p className="text-xs text-gray-500 mt-1">{text.uploadHint}</p>
+                <p className="text-xs text-gray-500 mt-1 break-words">{text.uploadHint}</p>
               </div>
 
               <div className="min-w-[200px]">
@@ -791,7 +1007,7 @@ export default function MosaicFilterApp() {
                   {text.brushSize}: {brushSize[0]}px
                 </Label>
 
-                <Slider value={brushSize} onValueChange={setBrushSize} min={5} max={100} step={1} className="mt-2" />
+                <Slider value={brushSize} onValueChange={setBrushSize} min={5} max={150} step={1} className="mt-2" />
               </div>
 
               <div className="min-w-[200px]">
@@ -802,7 +1018,7 @@ export default function MosaicFilterApp() {
                 <Slider value={mosaicSize} onValueChange={setMosaicSize} min={5} max={50} step={1} className="mt-2" />
               </div>
 
-              <div className="min-w-[240px] rounded-md border border-gray-200 p-3 space-y-2">
+              <div className="min-w-[240px] rounded-md border border-gray-200 p-3 space-y-2 min-w-0">
                 <label className="flex items-start gap-2 text-sm cursor-pointer">
                   <input
                     type="checkbox"
@@ -818,7 +1034,7 @@ export default function MosaicFilterApp() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div className="rounded-md border bg-white px-3 py-2 text-sm">
                 <div className="text-gray-500">{text.uploadImages}</div>
                 <div className="font-semibold">{images.length}</div>
@@ -831,6 +1047,8 @@ export default function MosaicFilterApp() {
                 <div className="text-gray-500">{text.readyToProcess}</div>
                 <div className="font-semibold">{pendingCount}</div>
               </div>
+            </div>
+
             </div>
 
             <div className="hidden md:block sticky top-2 z-30 bg-white/95 backdrop-blur border border-gray-200 rounded-lg p-2 shadow-sm">
@@ -900,7 +1118,7 @@ export default function MosaicFilterApp() {
 
                 <div className="space-y-1 max-h-32 overflow-y-auto">
                   {sortedImages.map((image) => (
-                    <div key={image.id} className="flex items-center gap-2 text-sm">
+                    <div key={image.id} className="flex items-center gap-2 text-sm min-w-0">
                       {image.status === "completed" && <CheckCircle className="w-4 h-4 text-green-500" />}
 
                       {image.status === "processing" && <Clock className="w-4 h-4 text-blue-500 animate-spin" />}
@@ -913,10 +1131,10 @@ export default function MosaicFilterApp() {
                         #{image.order}
                       </span>
 
-                      <span className="truncate flex-1">{image.file.name}</span>
+                      <span className="flex-1 min-w-0 break-all sm:truncate sm:whitespace-nowrap">{image.file.name}</span>
 
                       <span
-                        className={`text-xs px-2 py-1 rounded ${
+                        className={`text-xs px-2 py-1 rounded max-w-[130px] truncate ${
                           image.status === "completed"
                             ? "bg-green-100 text-green-700"
                             : image.status === "processing"
@@ -957,7 +1175,7 @@ export default function MosaicFilterApp() {
             <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
               <p className="text-sm text-blue-800 font-medium mb-1">{text.downloadInfo}</p>
 
-              <p className="text-xs text-blue-600">
+              <p className="text-xs text-blue-600 break-words">
                 {text.downloadInfoLine1} {downloadPrefix}_001.png, {downloadPrefix}_002.png...
                 <br />
                 {text.downloadInfoLine2} {downloadPrefix}_original_001.jpg...
@@ -984,11 +1202,216 @@ export default function MosaicFilterApp() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10 md:mb-0">
+        <div className="hidden md:grid md:grid-cols-[270px_minmax(0,1fr)] gap-4 items-start mb-6">
+          <aside className="sticky top-3 max-h-[calc(100vh-1.5rem)] overflow-y-auto pl-1 pr-2 py-1 space-y-4 text-foreground">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold">{text.quickControls}</p>
+              <p className="text-xs text-gray-500">{text.mobileTip}</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="desktop-locale-select">{text.language}</Label>
+              <select
+                id="desktop-locale-select"
+                value={locale}
+                onChange={(e) => setLocale(e.target.value as Locale)}
+                className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+              >
+                <option value="zh">{text.languageZh}</option>
+                <option value="en">{text.languageEn}</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="desktop-upload">{text.uploadImages}</Label>
+              <Input
+                id="desktop-upload"
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="cursor-pointer"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="desktop-download-prefix">{text.downloadPrefix}</Label>
+              <Input
+                id="desktop-download-prefix"
+                type="text"
+                value={downloadPrefix}
+                onChange={(e) => setDownloadPrefix(e.target.value)}
+                placeholder="mosaic"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span>{text.brushSize}</span>
+                <span>{brushSize[0]}px</span>
+              </div>
+              <Slider value={brushSize} onValueChange={setBrushSize} min={5} max={150} step={1} />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span>{text.mosaicBlockSize}</span>
+                <span>{mosaicSize[0]}px</span>
+              </div>
+              <Slider value={mosaicSize} onValueChange={setMosaicSize} min={5} max={50} step={1} />
+            </div>
+
+            <label className="flex items-start gap-2 text-sm p-2 cursor-pointer bg-gray-50 rounded-md">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={removeMetadataEnabled}
+                onChange={(e) => setRemoveMetadataEnabled(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">{text.removeMetadata}</span>
+                <span className="block text-xs text-gray-500">{text.removeMetadataHint}</span>
+              </span>
+            </label>
+
+            <div className="grid grid-cols-3 gap-2">
+              <Button type="button" size="sm" onClick={processAllImages} disabled={!hasImages || isProcessing} className="text-xs">
+                {text.quickProcess}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={downloadAllImages}
+                disabled={!hasImages || isDownloading}
+                className="text-xs bg-transparent"
+              >
+                {text.quickDownload}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={clearAllImages}
+                disabled={images.length === 0}
+                className="text-xs bg-transparent"
+              >
+                {text.clearAll}
+              </Button>
+            </div>
+
+            {processingProgress.total > 0 && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-gray-600">
+                  <span>{text.progressLabel}</span>
+                  <span>
+                    {processingProgress.current}/{processingProgress.total} ({progressPercent}%)
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+                </div>
+              </div>
+            )}
+          </aside>
+
+          <div className="space-y-4 min-w-0">
+            <div className="space-y-6">
+              {desktopRows.map((row) => {
+                const landscapeCount = row.items.filter((item) => item.span === 2).length
+                const hasLandscape = landscapeCount > 0
+                const isMixedLandscapeRow = row.items.length === 2 && landscapeCount === 1
+                const rowColumnCount = hasLandscape ? 2 : 3
+
+                let gridTemplateColumns = `repeat(${rowColumnCount}, minmax(0, 1fr))`
+
+                if (isMixedLandscapeRow) {
+                  const firstItem = row.items[0]
+                  const firstIsLandscape = getAspectTypeByImageId(firstItem.image.id) === "landscape"
+
+                  gridTemplateColumns = firstIsLandscape
+                    ? "2fr 1fr"
+                    : "1fr 2fr"
+                }
+
+                return (
+                  <div
+                    key={`desktop-row-${row.items[0]?.image.id ?? "empty"}`}
+                    className="grid gap-6"
+                    style={{ gridTemplateColumns }}
+                  >
+                    {row.items.map(({ image, span }) => {
+                      const itemColSpan = hasLandscape ? 1 : span
+                      const itemAspectType = getAspectTypeByImageId(image.id)
+                      const isLandscapeItem = itemAspectType === "landscape"
+                      const mixedRowWidthStyle = isMixedLandscapeRow
+                        ? { maxWidth: isLandscapeItem ? "760px" : "420px" }
+                        : undefined
+                      return (
+                        <div
+                          key={image.id}
+                          className={`${itemColSpan === 2 ? "col-span-2" : "col-span-1"} w-full justify-self-start`}
+                          style={mixedRowWidthStyle}
+                        >
+                          <ImageEditor
+                            image={image}
+                            aspectType={itemAspectType}
+                            brushSize={brushSize[0]}
+                            text={text}
+                            onUpdateBrushStrokes={updateImageBrushStrokes}
+                            onRemove={removeImage}
+                            onMoveUp={moveImageUp}
+                            onMoveDown={moveImageDown}
+                            canMoveUp={image.order > 1}
+                            canMoveDown={image.order < images.length}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+
+            {images.length === 0 && (
+              <Card
+                className={`transition-all duration-200 cursor-pointer ${isDragOver ? "border-blue-400 bg-blue-50" : ""}`}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <CardContent className="text-center py-12">
+                  <Upload className={`w-12 h-12 mx-auto mb-4 ${isDragOver ? "text-blue-500" : "text-gray-400"}`} />
+
+                  <p className={`text-lg font-medium mb-2 ${isDragOver ? "text-blue-700" : "text-gray-700"}`}>
+                    {isDragOver ? text.dropImagesHere : text.uploadToStart}
+                  </p>
+
+                  <p className="text-sm text-gray-400 mt-2">{text.dragAndDropHint}</p>
+
+                  <p className="text-xs text-gray-400 mt-1">{text.brushHint}</p>
+
+                  <Button
+                    type="button"
+                    className="mt-4"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      fileInputRef.current?.click()
+                    }}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    {text.chooseImages}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:hidden gap-6 mb-24">
           {sortedImages.map((image) => (
             <ImageEditor
               key={image.id}
               image={image}
+              aspectType={getAspectTypeByImageId(image.id)}
               brushSize={brushSize[0]}
               text={text}
               onUpdateBrushStrokes={updateImageBrushStrokes}
@@ -1003,7 +1426,7 @@ export default function MosaicFilterApp() {
 
         {images.length === 0 && (
           <Card
-            className={`transition-all duration-200 cursor-pointer ${isDragOver ? "border-blue-400 bg-blue-50" : ""}`}
+            className={`md:hidden transition-all duration-200 cursor-pointer ${isDragOver ? "border-blue-400 bg-blue-50" : ""}`}
             onClick={() => fileInputRef.current?.click()}
           >
             <CardContent className="text-center py-12">
@@ -1042,34 +1465,165 @@ export default function MosaicFilterApp() {
           </div>
         )}
 
-        <div className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-gray-200 bg-white/95 backdrop-blur px-3 py-2">
-          <p className="text-[11px] text-gray-500 mb-2">{text.quickActions}</p>
+        <div className="md:hidden fixed bottom-3 inset-x-3 z-40 rounded-xl border border-gray-200 bg-white/95 backdrop-blur px-3 py-2 shadow-lg">
+          {processingProgress.total > 0 && (
+            <div className="mb-2">
+              <div className="flex justify-between text-[11px] text-gray-600 mb-1 min-w-0">
+                <span className="truncate">
+                  {text.progressLabel}: {processingProgress.current}/{processingProgress.total}
+                </span>
+                <span>{progressPercent}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-1.5">
+                <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+              </div>
+            </div>
+          )}
+
+          {!isDownloading && processingComplete && (
+            <div className="mb-2 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-[11px] text-green-800 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span className="truncate">{text.downloadReady}</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-2">
-            <Button type="button" size="sm" onClick={() => fileInputRef.current?.click()}>
-              <Upload className="w-4 h-4 mr-1" />
-              {text.chooseImages}
+            <Button type="button" size="sm" onClick={() => fileInputRef.current?.click()} className="text-xs min-w-0">
+              <span className="truncate">{text.quickUpload}</span>
             </Button>
 
             <Button
+              type="button"
               size="sm"
               onClick={processAllImages}
               disabled={!hasImages || isProcessing}
-              className="flex items-center justify-center"
+              className="text-xs min-w-0"
             >
-              {text.processAllImages}
+              <span className="truncate">{text.quickProcess}</span>
             </Button>
 
             <Button
+              type="button"
               size="sm"
               variant="outline"
               onClick={downloadAllImages}
               disabled={!hasImages || isDownloading}
-              className="bg-transparent"
+              className={`text-xs min-w-0 bg-transparent ${
+                !isDownloading && hasClickedDownload ? "border-green-400 text-green-700 bg-green-50" : ""
+              }`}
             >
-              {text.downloadAll}
+              <span className="truncate">
+                {text.quickDownload}
+                {!isDownloading && hasClickedDownload ? " ✓" : ""}
+              </span>
             </Button>
           </div>
         </div>
+
+        <div className="md:hidden fixed bottom-24 right-4 z-40">
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            onClick={() => setIsMobileControlPanelOpen(true)}
+            className="h-12 w-12 rounded-full bg-white shadow-lg"
+            title={text.quickControls}
+          >
+            <SlidersHorizontal className="w-5 h-5" />
+          </Button>
+        </div>
+
+        {isMobileControlPanelOpen && (
+          <div className="md:hidden fixed inset-0 z-50 bg-black/40">
+            <div
+              className="absolute left-0 right-0 bottom-0 rounded-t-2xl bg-white max-h-[85vh] overflow-y-auto px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold">{text.quickControls}</h3>
+                <Button type="button" size="icon" variant="ghost" onClick={() => setIsMobileControlPanelOpen(false)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <div className="space-y-5">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800 break-words">
+                  {text.mobileTip}
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mobile-locale-select">{text.language}</Label>
+                    <select
+                      id="mobile-locale-select"
+                      value={locale}
+                      onChange={(e) => setLocale(e.target.value as Locale)}
+                      className="mt-1 w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                    >
+                      <option value="zh">{text.languageZh}</option>
+                      <option value="en">{text.languageEn}</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mobile-download-prefix">{text.downloadPrefix}</Label>
+                    <Input
+                      id="mobile-download-prefix"
+                      type="text"
+                      value={downloadPrefix}
+                      onChange={(e) => setDownloadPrefix(e.target.value)}
+                      placeholder="mosaic"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>
+                      {text.brushSize}: {brushSize[0]}px
+                    </Label>
+                    <Slider value={brushSize} onValueChange={setBrushSize} min={5} max={150} step={1} className="mt-1" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>
+                      {text.mosaicBlockSize}: {mosaicSize[0]}px
+                    </Label>
+                    <Slider value={mosaicSize} onValueChange={setMosaicSize} min={5} max={50} step={1} className="mt-1" />
+                  </div>
+
+                  <div className="rounded-md border border-gray-200 p-3 space-y-2.5">
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={removeMetadataEnabled}
+                        onChange={(e) => setRemoveMetadataEnabled(e.target.checked)}
+                      />
+                      <span className="leading-relaxed">
+                        <span className="font-medium">{text.removeMetadata}</span>
+                        <span className="block text-xs text-gray-500">{text.removeMetadataHint}</span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      clearAllImages()
+                      setIsMobileControlPanelOpen(false)
+                    }}
+                    disabled={images.length === 0}
+                    className="w-full"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    {text.clearAll}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   )
@@ -1077,6 +1631,8 @@ export default function MosaicFilterApp() {
 
 interface ImageEditorProps {
   image: ImageData
+
+  aspectType: AspectType
 
   brushSize: number
 
@@ -1097,6 +1653,7 @@ interface ImageEditorProps {
 
 function ImageEditor({
   image,
+  aspectType,
   brushSize,
   text,
   onUpdateBrushStrokes,
@@ -1124,6 +1681,10 @@ function ImageEditor({
 
   const [zoom, setZoom] = useState([100])
 
+  const [baseDimensions, setBaseDimensions] = useState<{ width: number; height: number } | null>(null)
+
+  const hasEverLoadedRef = useRef(false)
+
   const sourceUrl = image.processedUrl || image.originalUrl
 
   useEffect(() => {
@@ -1131,7 +1692,10 @@ function ImageEditor({
     if (!container) return
 
     const updateWidth = () => {
-      const nextWidth = Math.max(220, container.clientWidth - 2)
+      const availableWidth = container.clientWidth - 2
+      const isDesktop = window.matchMedia("(min-width: 768px)").matches
+      const boundedWidth = isDesktop ? Math.min(760, availableWidth) : availableWidth
+      const nextWidth = Math.max(220, boundedWidth)
       setContainerWidth(nextWidth)
     }
 
@@ -1142,6 +1706,14 @@ function ImageEditor({
 
     return () => observer.disconnect()
   }, [])
+
+  useEffect(() => {
+    const img = new Image()
+    img.onload = () => {
+      setBaseDimensions({ width: img.width, height: img.height })
+    }
+    img.src = image.originalUrl
+  }, [image.originalUrl])
 
   const drawImage = useCallback(() => {
     const canvas = canvasRef.current
@@ -1163,32 +1735,30 @@ function ImageEditor({
 
       const maxHeight = Math.max(360, Math.round(containerWidth * 1.35))
 
-      let displayWidth = img.width
+      let displayWidth: number
 
-      let displayHeight = img.height
+      let displayHeight: number
 
-      // Scale down for display only
+      const sizingWidth = baseDimensions?.width ?? img.width
+      const sizingHeight = baseDimensions?.height ?? img.height
+
+      displayWidth = sizingWidth
+      displayHeight = sizingHeight
 
       if (displayWidth > maxWidth) {
         displayHeight = (displayHeight * maxWidth) / displayWidth
-
         displayWidth = maxWidth
       }
 
       if (displayHeight > maxHeight) {
         displayWidth = (displayWidth * maxHeight) / displayHeight
-
         displayHeight = maxHeight
       }
 
-      // Apply zoom
-
       displayWidth = (displayWidth * zoom[0]) / 100
-
       displayHeight = (displayHeight * zoom[0]) / 100
 
       displayWidth = Math.max(1, Math.round(displayWidth))
-
       displayHeight = Math.max(1, Math.round(displayHeight))
 
       canvas.width = displayWidth
@@ -1200,18 +1770,19 @@ function ImageEditor({
       overlayCanvas.height = displayHeight
 
       setCanvasScale({
-        x: img.width / displayWidth,
+        x: sizingWidth / displayWidth,
 
-        y: img.height / displayHeight,
+        y: sizingHeight / displayHeight,
       })
 
       ctx.drawImage(img, 0, 0, displayWidth, displayHeight)
 
+      hasEverLoadedRef.current = true
       setImageLoaded(true)
     }
 
     img.src = sourceUrl
-  }, [sourceUrl, zoom, containerWidth])
+  }, [baseDimensions?.height, baseDimensions?.width, sourceUrl, zoom, containerWidth])
 
   const drawBrushStrokes = useCallback(
     (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, imgWidth: number, imgHeight: number) => {
@@ -1248,7 +1819,9 @@ function ImageEditor({
   )
 
   useEffect(() => {
-    setImageLoaded(false)
+    if (!hasEverLoadedRef.current) {
+      setImageLoaded(false)
+    }
     drawImage()
   }, [drawImage])
 
@@ -1454,19 +2027,50 @@ function ImageEditor({
     }
   }
 
+  const getAspectLabel = () => {
+    switch (aspectType) {
+      case "landscape":
+        return text.aspectLandscape
+      case "portrait":
+        return text.aspectPortrait
+      default:
+        return text.aspectSquare
+    }
+  }
+
+  const getAspectBadgeClass = () => {
+    switch (aspectType) {
+      case "landscape":
+        return "bg-purple-100 text-purple-700"
+      case "portrait":
+        return "bg-emerald-100 text-emerald-700"
+      default:
+        return "bg-slate-100 text-slate-700"
+    }
+  }
+
+  const desktopPreviewHeightClass =
+    aspectType === "portrait" ? "md:h-[520px] md:max-h-[520px]" : "md:h-[420px] md:max-h-[420px]"
+
   return (
-    <Card>
+    <Card className="h-full flex flex-col">
       <CardHeader className="pb-2">
-        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center">
-          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:min-w-0">
+          <div className="flex items-center gap-2 min-w-0 w-full sm:flex-1 sm:min-w-0 overflow-hidden">
             <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">#{image.order}</span>
 
-            <CardTitle className="text-sm truncate min-w-0 flex-1">{image.file.name}</CardTitle>
+            <span className={`text-xs font-medium px-2 py-1 rounded shrink-0 ${getAspectBadgeClass()}`}>
+              {getAspectLabel()}
+            </span>
+
+            <CardTitle className="text-sm min-w-0 flex-1 overflow-hidden break-all sm:truncate sm:whitespace-nowrap sm:block">
+              {image.file.name}
+            </CardTitle>
 
             <span className="shrink-0">{getStatusIcon()}</span>
           </div>
 
-          <div className="flex gap-1 flex-wrap justify-end shrink-0">
+          <div className="flex gap-1 flex-wrap justify-end shrink-0 w-full sm:w-auto sm:ml-2">
             <Button size="sm" variant="outline" onClick={() => onMoveUp(image.id)} disabled={!canMoveUp} title={text.moveUp}>
               <ArrowUp className="w-3 h-3" />
             </Button>
@@ -1492,8 +2096,8 @@ function ImageEditor({
         </div>
       </CardHeader>
 
-      <CardContent>
-        <div className="space-y-2">
+      <CardContent className="flex-1">
+        <div className="space-y-2 h-full flex flex-col">
           <div className="flex items-center gap-2 mb-2">
             <Label className="text-xs">
               {text.zoom}: {zoom[0]}%
@@ -1502,7 +2106,10 @@ function ImageEditor({
             <Slider value={zoom} onValueChange={setZoom} min={25} max={300} step={25} className="flex-1" />
           </div>
 
-          <div ref={canvasContainerRef} className="overflow-auto max-h-[75vh] border border-gray-200 rounded w-full p-2">
+          <div
+            ref={canvasContainerRef}
+            className={`overflow-auto border border-gray-200 rounded w-full p-2 flex-1 ${desktopPreviewHeightClass}`}
+          >
             <div className="flex justify-center">
               <div className="relative w-fit">
                 <canvas ref={canvasRef} className="absolute inset-0 border border-gray-300 block" />
