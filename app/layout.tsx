@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 const basePath = process.env.NODE_ENV === 'production' && process.env.NEXT_PUBLIC_BASE_PATH !== '' ? '/quick-apply-mosaic' : '';
 
 export const metadata: Metadata = {
-  title: "Mosaic App", 
-  description: "Interactive mosaic filter application for batch image processing",
+  title: "批量马赛克工具",
+  description: "支持批量图片处理的交互式马赛克应用",
   icons: {
     icon: `${basePath}/favicon.ico`,
   },
@@ -28,8 +28,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
+        suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}

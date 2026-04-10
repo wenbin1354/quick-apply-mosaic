@@ -25,6 +25,7 @@ import {
   AlertCircle,
   ArrowUp,
   ArrowDown,
+  Sparkles,
 } from "lucide-react"
 
 interface ImageData {
@@ -55,7 +56,125 @@ interface Point {
   y: number
 }
 
+const translations = {
+  zh: {
+    appTitle: "批量马赛克工具 - 画笔模式",
+    language: "语言",
+    languageZh: "简体中文",
+    languageEn: "English",
+    uploadImages: "上传图片",
+    downloadPrefix: "下载文件名前缀",
+    brushSize: "画笔大小",
+    mosaicBlockSize: "马赛克块大小",
+    processing: "处理中",
+    processAllImages: "处理全部图片",
+    downloadAll: "下载全部",
+    ordered: "按顺序",
+    clearAll: "清空全部",
+    progressTitle: "处理进度",
+    progressLabel: "进度",
+    statusMosaicApplied: "已应用马赛克",
+    statusProcessing: "处理中...",
+    statusNoBrushStrokes: "无画笔涂抹",
+    statusWaiting: "等待中",
+    processingComplete: "处理完成！",
+    processingSummary: (completed: number, skipped: number, total: number) =>
+      `${completed} 张图片已处理为马赛克，${skipped} 张图片没有画笔涂抹。已可按顺序下载全部 ${total} 张图片。`,
+    downloadInfo: "💡 下载说明",
+    downloadInfoLine1: "• 有画笔涂抹的图片会下载为：",
+    downloadInfoLine2: "• 未涂抹的图片会下载为：",
+    downloadInfoLine3: "• 文件会按你设置的上下箭头顺序下载",
+    downloadInfoLine4: "• 文件会保存到浏览器默认下载目录",
+    dropImagesHere: "把图片拖到这里！",
+    uploadToStart: "上传图片开始使用",
+    dragAndDropHint: "可从任意位置拖拽图片，或点击上传按钮",
+    brushHint: "使用画笔在需要打码的位置进行涂抹",
+    dropToUpload: "松开以上传图片",
+    zoom: "缩放",
+    loadingImage: "正在加载图片...",
+    brushStrokes: "画笔笔画",
+    paintHint: "在需要区域涂抹后应用马赛克效果",
+    mobileTip: "移动端提示：单指可直接涂抹，双指可缩放页面查看细节。",
+    removeMetadata: "下载时去除元数据",
+    removeMetadataHint: "启用后会重新编码图片并清理元数据",
+    brushCount: "已涂抹图片",
+    readyToProcess: "待处理",
+    downloading: "下载中",
+    downloadReady: "处理完成，可开始下载",
+    metadataEnabled: "开启",
+    metadataDisabled: "关闭",
+    moveUp: "上移",
+    moveDown: "下移",
+    clearStroke: "清除涂抹",
+    deleteImage: "删除图片",
+  },
+  en: {
+    appTitle: "Batch Mosaic Tool - Brush Mode",
+    language: "Language",
+    languageZh: "简体中文",
+    languageEn: "English",
+    uploadImages: "Upload Images",
+    downloadPrefix: "Download Filename Prefix",
+    brushSize: "Brush Size",
+    mosaicBlockSize: "Mosaic Block Size",
+    processing: "Processing",
+    processAllImages: "Process All Images",
+    downloadAll: "Download All",
+    ordered: "Ordered",
+    clearAll: "Clear All",
+    progressTitle: "Processing Progress",
+    progressLabel: "Progress",
+    statusMosaicApplied: "Mosaic Applied",
+    statusProcessing: "Processing...",
+    statusNoBrushStrokes: "No Brush Strokes",
+    statusWaiting: "Waiting",
+    processingComplete: "Processing Complete!",
+    processingSummary: (completed: number, skipped: number, total: number) =>
+      `${completed} images processed with mosaic effect, ${skipped} images had no brush strokes. Ready to download all ${total} images in order.`,
+    downloadInfo: "💡 Download Info",
+    downloadInfoLine1: "• Images with brush strokes will be downloaded as:",
+    downloadInfoLine2: "• Images without brush strokes will be downloaded as:",
+    downloadInfoLine3: "• Files will be downloaded in the order you set",
+    downloadInfoLine4: "• Files will be saved to your browser's default download folder",
+    dropImagesHere: "Drop images here!",
+    uploadToStart: "Upload images to get started",
+    dragAndDropHint: "Drag and drop images here, or use the upload button",
+    brushHint: "Use the brush tool to paint areas for mosaic effect",
+    dropToUpload: "Drop images here to upload",
+    zoom: "Zoom",
+    loadingImage: "Loading image...",
+    brushStrokes: "Brush strokes",
+    paintHint: "Paint areas to apply mosaic effect",
+    mobileTip: "Mobile tip: one finger to paint, two fingers to zoom the page for detail.",
+    removeMetadata: "Remove metadata on download",
+    removeMetadataHint: "When enabled, images are re-encoded and metadata is stripped",
+    brushCount: "Images with strokes",
+    readyToProcess: "Pending",
+    downloading: "Downloading",
+    downloadReady: "Processing finished, ready to download",
+    metadataEnabled: "On",
+    metadataDisabled: "Off",
+    moveUp: "Move Up",
+    moveDown: "Move Down",
+    clearStroke: "Clear Strokes",
+    deleteImage: "Delete Image",
+  },
+} as const
+
+type Locale = keyof typeof translations
+type UIText = (typeof translations)["zh"]
+
+const sanitizeImageDataLSB = (data: Uint8ClampedArray) => {
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = data[i] & 0b11111110
+    data[i + 1] = data[i + 1] & 0b11111110
+    data[i + 2] = data[i + 2] & 0b11111110
+  }
+}
+
 export default function MosaicFilterApp() {
+  const [locale, setLocale] = useState<Locale>("en")
+
   const [images, setImages] = useState<ImageData[]>([])
 
   const [mosaicSize, setMosaicSize] = useState([10])
@@ -68,9 +187,30 @@ export default function MosaicFilterApp() {
 
   const [downloadPrefix, setDownloadPrefix] = useState("mosaic")
 
+  const [removeMetadataEnabled, setRemoveMetadataEnabled] = useState(true)
+
+  const [isDownloading, setIsDownloading] = useState(false)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [isDragOver, setIsDragOver] = useState(false)
+
+  const text = translations[locale]
+
+  useEffect(() => {
+    const savedLocale = window.localStorage.getItem("mosaic-locale")
+    if (savedLocale === "zh" || savedLocale === "en") {
+      setLocale(savedLocale)
+      return
+    }
+
+    setLocale(window.navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en")
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem("mosaic-locale", locale)
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en"
+  }, [locale])
 
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || [])
@@ -175,6 +315,36 @@ export default function MosaicFilterApp() {
       prev.map((img) => (img.id === id ? { ...img, status, ...(processedUrl && { processedUrl }) } : img)),
     )
   }, [])
+
+  const sanitizeBlob = useCallback(
+    async (inputBlob: Blob) => {
+      const bitmap = await createImageBitmap(inputBlob)
+      const canvas = document.createElement("canvas")
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+
+      const ctx = canvas.getContext("2d")
+      if (!ctx) {
+        bitmap.close()
+        return inputBlob
+      }
+
+      ctx.drawImage(bitmap, 0, 0)
+      bitmap.close()
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      sanitizeImageDataLSB(imageData.data)
+
+      ctx.putImageData(imageData, 0, 0)
+
+      const sanitizedBlob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), "image/png")
+      })
+
+      return sanitizedBlob ?? inputBlob
+    },
+    [],
+  )
 
   const applyMosaicFilter = useCallback(
     async (
@@ -346,9 +516,11 @@ export default function MosaicFilterApp() {
 
         await applyMosaicFilter(canvas, ctx, image.brushStrokes, mosaicSize[0])
 
-        canvas.toBlob((blob) => {
+        canvas.toBlob(async (blob) => {
           if (blob) {
-            const processedUrl = URL.createObjectURL(blob)
+            const finalBlob = removeMetadataEnabled ? await sanitizeBlob(blob) : blob
+
+            const processedUrl = URL.createObjectURL(finalBlob)
 
             updateImageStatus(image.id, "completed", processedUrl)
           } else {
@@ -363,51 +535,61 @@ export default function MosaicFilterApp() {
     }
 
     setIsProcessing(false)
-  }, [images, mosaicSize, applyMosaicFilter, updateImageStatus])
+  }, [images, mosaicSize, applyMosaicFilter, updateImageStatus, removeMetadataEnabled, sanitizeBlob])
 
-  const downloadAllImages = useCallback(() => {
+  const fetchBlobFromObjectUrl = useCallback(async (url: string) => {
+    const response = await fetch(url)
+    return response.blob()
+  }, [])
+
+  const triggerDownload = useCallback((blob: Blob, filename: string) => {
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = objectUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(objectUrl)
+  }, [])
+
+  const downloadAllImages = useCallback(async () => {
+    setIsDownloading(true)
+
     // Sort images by order before downloading
 
     const sortedImages = [...images].sort((a, b) => a.order - b.order)
 
-    sortedImages.forEach((image, index) => {
-      setTimeout(() => {
-        const link = document.createElement("a")
-
-        // Get file extension from original file
-
-        const originalExt = image.file.name.split(".").pop() || "png"
-
-        // Create ordered filename: prefix_001.ext, prefix_002.ext, etc.
-
+    try {
+      for (let index = 0; index < sortedImages.length; index++) {
+        const image = sortedImages[index]
         const paddedOrder = image.order.toString().padStart(3, "0")
+        const sourceUrl = image.processedUrl || image.originalUrl
 
-        if (image.processedUrl) {
-          // Download processed version
-
-          link.href = image.processedUrl
-
-          link.download = `${downloadPrefix}_${paddedOrder}.${originalExt}`
-        } else {
-          // Download original version
-
-          link.href = image.originalUrl
-
-          link.download = `${downloadPrefix}_original_${paddedOrder}.${originalExt}`
+        let outputBlob = await fetchBlobFromObjectUrl(sourceUrl)
+        if (removeMetadataEnabled) {
+          outputBlob = await sanitizeBlob(outputBlob)
         }
 
-        document.body.appendChild(link)
+        const extension = removeMetadataEnabled || image.processedUrl ? "png" : image.file.name.split(".").pop() || "png"
+        const fileName = image.processedUrl
+          ? `${downloadPrefix}_${paddedOrder}.${extension}`
+          : `${downloadPrefix}_original_${paddedOrder}.${extension}`
 
-        link.click()
+        triggerDownload(outputBlob, fileName)
 
-        document.body.removeChild(link)
-      }, index * 100) // Small delay between downloads to avoid browser blocking
-    })
-  }, [images, downloadPrefix])
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    } finally {
+      setIsDownloading(false)
+    }
+  }, [images, downloadPrefix, fetchBlobFromObjectUrl, removeMetadataEnabled, sanitizeBlob, triggerDownload])
 
   const hasImages = images.length > 0
 
   const hasBrushStrokes = images.some((img) => img.brushStrokes.length > 0)
+
+  const pendingCount = images.filter((img) => img.status === "pending").length
 
   const completedCount = images.filter((img) => img.status === "completed").length
 
@@ -477,14 +659,31 @@ export default function MosaicFilterApp() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Brush className="w-6 h-6" />
-              Mass Mosaic Filter App - Brush Mode
+              {text.appTitle}
             </CardTitle>
           </CardHeader>
 
           <CardContent className="space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {text.mobileTip}
+            </div>
+
             <div className="flex flex-wrap gap-4 items-end">
+              <div className="min-w-[180px]">
+                <Label htmlFor="locale-select">{text.language}</Label>
+                <select
+                  id="locale-select"
+                  value={locale}
+                  onChange={(e) => setLocale(e.target.value as Locale)}
+                  className="mt-1 w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                >
+                  <option value="zh">{text.languageZh}</option>
+                  <option value="en">{text.languageEn}</option>
+                </select>
+              </div>
+
               <div className="flex-1 min-w-[200px]">
-                <Label htmlFor="file-upload">Upload Images</Label>
+                <Label htmlFor="file-upload">{text.uploadImages}</Label>
 
                 <Input
                   id="file-upload"
@@ -497,7 +696,7 @@ export default function MosaicFilterApp() {
               </div>
 
               <div className="min-w-[200px]">
-                <Label htmlFor="download-prefix">Download Filename Prefix</Label>
+                <Label htmlFor="download-prefix">{text.downloadPrefix}</Label>
 
                 <Input
                   id="download-prefix"
@@ -509,15 +708,49 @@ export default function MosaicFilterApp() {
               </div>
 
               <div className="min-w-[200px]">
-                <Label>Brush Size: {brushSize[0]}px</Label>
+                <Label>
+                  {text.brushSize}: {brushSize[0]}px
+                </Label>
 
                 <Slider value={brushSize} onValueChange={setBrushSize} min={5} max={100} step={1} className="mt-2" />
               </div>
 
               <div className="min-w-[200px]">
-                <Label>Mosaic Block Size: {mosaicSize[0]}px</Label>
+                <Label>
+                  {text.mosaicBlockSize}: {mosaicSize[0]}px
+                </Label>
 
                 <Slider value={mosaicSize} onValueChange={setMosaicSize} min={5} max={50} step={1} className="mt-2" />
+              </div>
+
+              <div className="min-w-[240px] rounded-md border border-gray-200 p-3 space-y-2">
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={removeMetadataEnabled}
+                    onChange={(e) => setRemoveMetadataEnabled(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">{text.removeMetadata}</span>
+                    <span className="block text-xs text-gray-500">{text.removeMetadataHint}</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="rounded-md border bg-white px-3 py-2 text-sm">
+                <div className="text-gray-500">{text.uploadImages}</div>
+                <div className="font-semibold">{images.length}</div>
+              </div>
+              <div className="rounded-md border bg-white px-3 py-2 text-sm">
+                <div className="text-gray-500">{text.brushCount}</div>
+                <div className="font-semibold">{images.filter((img) => img.brushStrokes.length > 0).length}</div>
+              </div>
+              <div className="rounded-md border bg-white px-3 py-2 text-sm">
+                <div className="text-gray-500">{text.readyToProcess}</div>
+                <div className="font-semibold">{pendingCount}</div>
               </div>
             </div>
 
@@ -528,18 +761,20 @@ export default function MosaicFilterApp() {
                 className="flex items-center gap-2"
               >
                 {isProcessing
-                  ? `Processing ${processingProgress.current}/${processingProgress.total}...`
-                  : "Process All Images"}
+                  ? `${text.processing} ${processingProgress.current}/${processingProgress.total}...`
+                  : text.processAllImages}
               </Button>
 
               <Button
                 onClick={downloadAllImages}
-                disabled={!hasImages}
+                disabled={!hasImages || isDownloading}
                 variant="outline"
                 className="flex items-center gap-2 bg-transparent"
               >
                 <Download className="w-4 h-4" />
-                Download All ({images.length}) - Ordered
+                {isDownloading
+                  ? `${text.downloading}...`
+                  : `${text.downloadAll} (${images.length}) - ${text.ordered}`}
               </Button>
 
               <Button
@@ -549,7 +784,7 @@ export default function MosaicFilterApp() {
                 className="flex items-center gap-2 bg-transparent"
               >
                 <Trash2 className="w-4 h-4" />
-                Clear All
+                {text.clearAll}
               </Button>
             </div>
 
@@ -560,14 +795,14 @@ export default function MosaicFilterApp() {
                 <div className="flex items-center gap-2 mb-2">
                   <Clock className="w-4 h-4" />
 
-                  <span className="font-medium">Processing Progress</span>
+                  <span className="font-medium">{text.progressTitle}</span>
                 </div>
 
                 {isProcessing && (
                   <div className="mb-3">
                     <div className="flex justify-between text-sm mb-1">
                       <span>
-                        Progress: {processingProgress.current} / {processingProgress.total}
+                        {text.progressLabel}: {processingProgress.current} / {processingProgress.total}
                       </span>
 
                       <span>{Math.round((processingProgress.current / processingProgress.total) * 100)}%</span>
@@ -611,12 +846,12 @@ export default function MosaicFilterApp() {
                         }`}
                       >
                         {image.status === "completed"
-                          ? "Mosaic Applied"
+                          ? text.statusMosaicApplied
                           : image.status === "processing"
-                            ? "Processing..."
+                            ? text.statusProcessing
                             : image.status === "skipped"
-                              ? "No Brush Strokes"
-                              : "Waiting"}
+                              ? text.statusNoBrushStrokes
+                              : text.statusWaiting}
                       </span>
                     </div>
                   ))}
@@ -627,12 +862,11 @@ export default function MosaicFilterApp() {
                     <div className="flex items-center gap-2 text-green-800">
                       <CheckCircle className="w-5 h-5" />
 
-                      <span className="font-medium">Processing Complete!</span>
+                      <span className="font-medium">{text.processingComplete}</span>
                     </div>
 
                     <p className="text-sm text-green-700 mt-1">
-                      {completedCount} images processed with mosaic effect, {skippedCount} images without brush strokes.
-                      Ready to download all {images.length} images in order.
+                      {text.processingSummary(completedCount, skippedCount, images.length)}
                     </p>
                   </div>
                 )}
@@ -640,16 +874,32 @@ export default function MosaicFilterApp() {
             )}
 
             <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-sm text-blue-800 font-medium mb-1">💡 Download Information</p>
+              <p className="text-sm text-blue-800 font-medium mb-1">{text.downloadInfo}</p>
 
               <p className="text-xs text-blue-600">
-                • Images with brush strokes will be downloaded as: {downloadPrefix}_001.jpg, {downloadPrefix}_002.png,
-                etc.
-                <br />• Images without brush strokes will be downloaded as: {downloadPrefix}_original_001.jpg, etc.
-                <br />• Files will be downloaded in the order you set using the up/down arrows
-                <br />• Files will be saved to your browser's default download folder
+                {text.downloadInfoLine1} {downloadPrefix}_001.png, {downloadPrefix}_002.png...
+                <br />
+                {text.downloadInfoLine2} {downloadPrefix}_original_001.jpg...
+                <br />
+                {text.downloadInfoLine3}
+                <br />
+                {text.downloadInfoLine4}
+                <br />• {text.removeMetadata}: {removeMetadataEnabled ? text.metadataEnabled : text.metadataDisabled}
               </p>
             </div>
+
+            {isDownloading && (
+              <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+                {text.downloading}...
+              </div>
+            )}
+
+            {!isDownloading && processingComplete && (
+              <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                {text.downloadReady}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -659,6 +909,7 @@ export default function MosaicFilterApp() {
               key={image.id}
               image={image}
               brushSize={brushSize[0]}
+              text={text}
               onUpdateBrushStrokes={updateImageBrushStrokes}
               onRemove={removeImage}
               onMoveUp={moveImageUp}
@@ -675,12 +926,12 @@ export default function MosaicFilterApp() {
               <Upload className={`w-12 h-12 mx-auto mb-4 ${isDragOver ? "text-blue-500" : "text-gray-400"}`} />
 
               <p className={`text-lg font-medium mb-2 ${isDragOver ? "text-blue-700" : "text-gray-700"}`}>
-                {isDragOver ? "Drop images here!" : "Upload images to get started"}
+                {isDragOver ? text.dropImagesHere : text.uploadToStart}
               </p>
 
-              <p className="text-sm text-gray-400 mt-2">Drag & drop images from anywhere, or use the upload button</p>
+              <p className="text-sm text-gray-400 mt-2">{text.dragAndDropHint}</p>
 
-              <p className="text-xs text-gray-400 mt-1">Use the brush tool to paint areas for mosaic effect</p>
+              <p className="text-xs text-gray-400 mt-1">{text.brushHint}</p>
             </CardContent>
           </Card>
         )}
@@ -690,7 +941,7 @@ export default function MosaicFilterApp() {
             <div className="bg-white rounded-lg p-8 shadow-lg border-2 border-blue-400 border-dashed">
               <Upload className="w-16 h-16 mx-auto mb-4 text-blue-500" />
 
-              <p className="text-xl font-semibold text-blue-700">Drop images here to upload</p>
+              <p className="text-xl font-semibold text-blue-700">{text.dropToUpload}</p>
             </div>
           </div>
         )}
@@ -703,6 +954,8 @@ interface ImageEditorProps {
   image: ImageData
 
   brushSize: number
+
+  text: UIText
 
   onUpdateBrushStrokes: (id: string, brushStrokes: BrushStroke[]) => void
 
@@ -720,6 +973,7 @@ interface ImageEditorProps {
 function ImageEditor({
   image,
   brushSize,
+  text,
   onUpdateBrushStrokes,
   onRemove,
   onMoveUp,
@@ -731,6 +985,8 @@ function ImageEditor({
 
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
 
+  const canvasContainerRef = useRef<HTMLDivElement>(null)
+
   const [isDrawing, setIsDrawing] = useState(false)
 
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
@@ -739,7 +995,26 @@ function ImageEditor({
 
   const [canvasScale, setCanvasScale] = useState({ x: 1, y: 1 })
 
+  const [containerWidth, setContainerWidth] = useState(400)
+
   const [zoom, setZoom] = useState([100])
+
+  useEffect(() => {
+    const container = canvasContainerRef.current
+    if (!container) return
+
+    const updateWidth = () => {
+      const nextWidth = Math.max(220, container.clientWidth - 2)
+      setContainerWidth(nextWidth)
+    }
+
+    updateWidth()
+
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(container)
+
+    return () => observer.disconnect()
+  }, [])
 
   const drawImage = useCallback(() => {
     const canvas = canvasRef.current
@@ -759,9 +1034,9 @@ function ImageEditor({
     img.onload = () => {
       // Display size for the canvas (with zoom)
 
-      const maxWidth = 400
+      const maxWidth = containerWidth
 
-      const maxHeight = 300
+      const maxHeight = Math.max(360, Math.round(containerWidth * 1.35))
 
       let displayWidth = img.width
 
@@ -813,7 +1088,7 @@ function ImageEditor({
     }
 
     img.src = image.processedUrl || image.originalUrl
-  }, [image, zoom])
+  }, [image, zoom, containerWidth])
 
   const drawBrushStrokes = useCallback(
     (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, imgWidth: number, imgHeight: number) => {
@@ -853,7 +1128,7 @@ function ImageEditor({
     drawImage()
   }, [drawImage])
 
-  const getMousePos = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const getCanvasPos = useCallback((clientX: number, clientY: number) => {
     const canvas = overlayCanvasRef.current
 
     if (!canvas) return { x: 0, y: 0 }
@@ -861,145 +1136,143 @@ function ImageEditor({
     const rect = canvas.getBoundingClientRect()
 
     return {
-      x: e.clientX - rect.left,
+      x: clientX - rect.left,
 
-      y: e.clientY - rect.top,
+      y: clientY - rect.top,
     }
   }, [])
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const pos = getMousePos(e)
+  const drawOverlay = useCallback(
+    (previewStroke?: Point[]) => {
+      const overlayCanvas = overlayCanvasRef.current
+      if (!overlayCanvas) return
 
+      const overlayCtx = overlayCanvas.getContext("2d")
+      if (!overlayCtx) return
+
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+
+      drawBrushStrokes(
+        overlayCtx,
+        overlayCanvas.width,
+        overlayCanvas.height,
+        overlayCanvas.width * canvasScale.x,
+        overlayCanvas.height * canvasScale.y,
+      )
+
+      if (previewStroke && previewStroke.length > 0) {
+        overlayCtx.fillStyle = "rgba(0, 255, 0, 0.5)"
+        overlayCtx.strokeStyle = "rgba(0, 255, 0, 0.8)"
+        overlayCtx.lineWidth = 1
+
+        const scaleX = 1 / canvasScale.x
+        const scaleY = 1 / canvasScale.y
+        const radius = brushSize * Math.min(scaleX, scaleY)
+
+        previewStroke.forEach((point) => {
+          const x = point.x * scaleX
+          const y = point.y * scaleY
+
+          overlayCtx.beginPath()
+          overlayCtx.arc(x, y, radius, 0, 2 * Math.PI)
+          overlayCtx.fill()
+          overlayCtx.stroke()
+        })
+      }
+    },
+    [brushSize, canvasScale.x, canvasScale.y, drawBrushStrokes],
+  )
+
+  const drawBrushPreview = useCallback(
+    (clientX: number, clientY: number) => {
+      const pos = getCanvasPos(clientX, clientY)
+      const overlayCanvas = overlayCanvasRef.current
+      if (!overlayCanvas) return
+
+      const overlayCtx = overlayCanvas.getContext("2d")
+      if (!overlayCtx) return
+
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+
+      drawBrushStrokes(
+        overlayCtx,
+        overlayCanvas.width,
+        overlayCanvas.height,
+        overlayCanvas.width * canvasScale.x,
+        overlayCanvas.height * canvasScale.y,
+      )
+
+      overlayCtx.strokeStyle = "rgba(0, 255, 0, 0.8)"
+      overlayCtx.lineWidth = 2
+      overlayCtx.setLineDash([5, 5])
+
+      const radius = brushSize / Math.min(canvasScale.x, canvasScale.y)
+      overlayCtx.beginPath()
+      overlayCtx.arc(pos.x, pos.y, radius, 0, 2 * Math.PI)
+      overlayCtx.stroke()
+
+      overlayCtx.setLineDash([])
+    },
+    [brushSize, canvasScale.x, canvasScale.y, drawBrushStrokes, getCanvasPos],
+  )
+
+  const beginStroke = useCallback(
+    (clientX: number, clientY: number) => {
+      const pos = getCanvasPos(clientX, clientY)
       const actualPos = {
         x: pos.x * canvasScale.x,
-
         y: pos.y * canvasScale.y,
       }
 
       setIsDrawing(true)
-
       setCurrentStroke([actualPos])
+      drawOverlay([actualPos])
     },
-
-    [getMousePos, canvasScale],
+    [canvasScale.x, canvasScale.y, drawOverlay, getCanvasPos],
   )
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const pos = getMousePos(e)
-
+  const continueStroke = useCallback(
+    (clientX: number, clientY: number) => {
+      const pos = getCanvasPos(clientX, clientY)
       const actualPos = {
         x: pos.x * canvasScale.x,
-
         y: pos.y * canvasScale.y,
       }
 
-      if (isDrawing) {
-        setCurrentStroke((prev) => [...prev, actualPos])
-
-        // Draw current stroke preview
-
-        const overlayCanvas = overlayCanvasRef.current
-
-        if (overlayCanvas) {
-          const overlayCtx = overlayCanvas.getContext("2d")
-
-          if (overlayCtx) {
-            // Redraw everything
-
-            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
-
-            drawBrushStrokes(
-              overlayCtx,
-
-              overlayCanvas.width,
-
-              overlayCanvas.height,
-
-              overlayCanvas.width * canvasScale.x,
-
-              overlayCanvas.height * canvasScale.y,
-            )
-
-            // Draw current stroke
-
-            overlayCtx.fillStyle = "rgba(0, 255, 0, 0.5)"
-
-            overlayCtx.strokeStyle = "rgba(0, 255, 0, 0.8)"
-
-            overlayCtx.lineWidth = 1
-
-            const scaleX = 1 / canvasScale.x
-
-            const scaleY = 1 / canvasScale.y
-
-            const radius = brushSize * Math.min(scaleX, scaleY)
-
-            currentStroke.concat([actualPos]).forEach((point) => {
-              const x = point.x * scaleX
-
-              const y = point.y * scaleY
-
-              overlayCtx.beginPath()
-
-              overlayCtx.arc(x, y, radius, 0, 2 * Math.PI)
-
-              overlayCtx.fill()
-
-              overlayCtx.stroke()
-            })
-          }
-        }
-      } else {
-        // Show brush preview
-
-        const overlayCanvas = overlayCanvasRef.current
-
-        if (overlayCanvas) {
-          const overlayCtx = overlayCanvas.getContext("2d")
-
-          if (overlayCtx) {
-            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
-
-            drawBrushStrokes(
-              overlayCtx,
-
-              overlayCanvas.width,
-
-              overlayCanvas.height,
-
-              overlayCanvas.width * canvasScale.x,
-
-              overlayCanvas.height * canvasScale.y,
-            )
-
-            // Draw brush preview
-
-            overlayCtx.strokeStyle = "rgba(0, 255, 0, 0.8)"
-
-            overlayCtx.lineWidth = 2
-
-            overlayCtx.setLineDash([5, 5])
-
-            const radius = brushSize / Math.min(canvasScale.x, canvasScale.y)
-
-            overlayCtx.beginPath()
-
-            overlayCtx.arc(pos.x, pos.y, radius, 0, 2 * Math.PI)
-
-            overlayCtx.stroke()
-
-            overlayCtx.setLineDash([])
-          }
-        }
-      }
+      setCurrentStroke((prev) => {
+        const next = [...prev, actualPos]
+        drawOverlay(next)
+        return next
+      })
     },
-
-    [getMousePos, canvasScale, isDrawing, currentStroke, brushSize, drawBrushStrokes],
+    [canvasScale.x, canvasScale.y, drawOverlay, getCanvasPos],
   )
 
-  const handleMouseUp = useCallback(() => {
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
+      beginStroke(e.clientX, e.clientY)
+    },
+    [beginStroke],
+  )
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      e.preventDefault()
+      if (isDrawing) {
+        continueStroke(e.clientX, e.clientY)
+        return
+      }
+
+      if (e.pointerType === "mouse") {
+        drawBrushPreview(e.clientX, e.clientY)
+      }
+    },
+    [continueStroke, drawBrushPreview, isDrawing],
+  )
+
+  const handleStrokeEnd = useCallback(() => {
     if (!isDrawing || currentStroke.length === 0) return
 
     const newStroke: BrushStroke = {
@@ -1015,35 +1288,22 @@ function ImageEditor({
     setCurrentStroke([])
   }, [isDrawing, currentStroke, brushSize, image.id, image.brushStrokes, onUpdateBrushStrokes])
 
-  const handleMouseLeave = useCallback(() => {
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      e.preventDefault()
+      e.currentTarget.releasePointerCapture(e.pointerId)
+      handleStrokeEnd()
+    },
+    [handleStrokeEnd],
+  )
+
+  const handlePointerLeave = useCallback(() => {
     if (isDrawing) {
-      handleMouseUp()
+      handleStrokeEnd()
     } else {
-      // Clear brush preview
-
-      const overlayCanvas = overlayCanvasRef.current
-
-      if (overlayCanvas) {
-        const overlayCtx = overlayCanvas.getContext("2d")
-
-        if (overlayCtx) {
-          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
-
-          drawBrushStrokes(
-            overlayCtx,
-
-            overlayCanvas.width,
-
-            overlayCanvas.height,
-
-            overlayCanvas.width * canvasScale.x,
-
-            overlayCanvas.height * canvasScale.y,
-          )
-        }
-      }
+      drawOverlay()
     }
-  }, [isDrawing, handleMouseUp, drawBrushStrokes, canvasScale])
+  }, [drawOverlay, handleStrokeEnd, isDrawing])
 
   const clearBrushStrokes = useCallback(() => {
     onUpdateBrushStrokes(image.id, [])
@@ -1068,29 +1328,35 @@ function ImageEditor({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">#{image.order}</span>
 
-            <CardTitle className="text-sm truncate">{image.file.name}</CardTitle>
+            <CardTitle className="text-sm truncate min-w-0">{image.file.name}</CardTitle>
 
             {getStatusIcon()}
           </div>
 
-          <div className="flex gap-1">
-            <Button size="sm" variant="outline" onClick={() => onMoveUp(image.id)} disabled={!canMoveUp}>
+          <div className="flex gap-1 flex-wrap justify-end shrink-0">
+            <Button size="sm" variant="outline" onClick={() => onMoveUp(image.id)} disabled={!canMoveUp} title={text.moveUp}>
               <ArrowUp className="w-3 h-3" />
             </Button>
 
-            <Button size="sm" variant="outline" onClick={() => onMoveDown(image.id)} disabled={!canMoveDown}>
+            <Button size="sm" variant="outline" onClick={() => onMoveDown(image.id)} disabled={!canMoveDown} title={text.moveDown}>
               <ArrowDown className="w-3 h-3" />
             </Button>
 
-            <Button size="sm" variant="outline" onClick={clearBrushStrokes} disabled={image.brushStrokes.length === 0}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={clearBrushStrokes}
+              disabled={image.brushStrokes.length === 0}
+              title={text.clearStroke}
+            >
               <RotateCcw className="w-3 h-3" />
             </Button>
 
-            <Button size="sm" variant="outline" onClick={() => onRemove(image.id)}>
+            <Button size="sm" variant="outline" onClick={() => onRemove(image.id)} title={text.deleteImage}>
               <Trash2 className="w-3 h-3" />
             </Button>
           </div>
@@ -1100,34 +1366,41 @@ function ImageEditor({
       <CardContent>
         <div className="space-y-2">
           <div className="flex items-center gap-2 mb-2">
-            <Label className="text-xs">Zoom: {zoom[0]}%</Label>
+            <Label className="text-xs">
+              {text.zoom}: {zoom[0]}%
+            </Label>
 
             <Slider value={zoom} onValueChange={setZoom} min={25} max={300} step={25} className="flex-1" />
           </div>
 
-          <div className="relative overflow-auto max-h-96 border border-gray-200 rounded">
-            <canvas ref={canvasRef} className="absolute inset-0 border border-gray-300" />
+          <div ref={canvasContainerRef} className="overflow-auto max-h-[75vh] border border-gray-200 rounded w-full p-2">
+            <div className="flex justify-center">
+              <div className="relative w-fit">
+                <canvas ref={canvasRef} className="absolute inset-0 border border-gray-300 block" />
 
-            <canvas
-              ref={overlayCanvasRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseLeave}
-              className="relative border border-gray-300 cursor-crosshair"
-            />
+                <canvas
+                  ref={overlayCanvasRef}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerLeave={handlePointerLeave}
+                  onPointerCancel={handlePointerLeave}
+                  className="relative border border-gray-300 cursor-crosshair touch-none block"
+                />
+              </div>
+            </div>
           </div>
 
           {!imageLoaded && (
             <div className="w-full h-48 bg-gray-200 flex flex-col items-center justify-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-2"></div>
 
-              <p className="text-sm text-gray-500">Loading image...</p>
+              <p className="text-sm text-gray-500">{text.loadingImage}</p>
             </div>
           )}
 
           <p className="text-xs text-gray-500">
-            Brush strokes: {image.brushStrokes.length} | Paint areas to apply mosaic effect
+            {text.brushStrokes}: {image.brushStrokes.length} | {text.paintHint}
           </p>
         </div>
       </CardContent>

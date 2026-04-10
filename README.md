@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Quick Apply Mosaic
 
-## Getting Started
+Batch image mosaic editor with brush masking, drag-and-drop upload, ordering controls, and optional metadata stripping on download.
 
-First, run the development server:
+## Features
+
+- Brush-based selective mosaic editing
+- Batch process + ordered batch download
+- Mobile-friendly pointer drawing support
+- Optional metadata stripping on download (re-encode + LSB cleanup)
+- Bilingual UI (简体中文 / English)
+
+## Language behavior
+
+The app chooses language with this priority:
+
+1. `localStorage` value `mosaic-locale` (if previously selected)
+2. Browser locale (`navigator.language`): starts with `zh` => Chinese, otherwise English
+
+You can always switch language from the UI dropdown.
+
+## Local development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run lint
+npm run build
+```
 
-## Learn More
+## GitHub Pages deployment (auto)
 
-To learn more about Next.js, take a look at the following resources:
+This repo includes GitHub Actions workflow at `.github/workflows/deploy-pages.yml`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+On every push to `main`, it will:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Install dependencies
+2. Run Next.js static export build
+3. Deploy `out/` to GitHub Pages
 
-## Deploy on Vercel
+### One-time GitHub setup
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+In your GitHub repository settings:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Go to **Settings → Pages**
+2. Set **Source** to **GitHub Actions**
+
+After that, pushing to `main` auto-deploys.
+
+## Notes
+
+- This project is configured for project-pages path `/quick-apply-mosaic` in production builds.
+- If browser extensions inject attributes into `body/html`, hydration warning noise is suppressed in layout.
