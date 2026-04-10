@@ -16,7 +16,7 @@ import { Slider } from "@/components/ui/slider"
 import { buildDownloadFileName } from "@/lib/download"
 import { localeToHtmlLang, resolveInitialLocale, type Locale } from "@/lib/locale"
 import { LANDSCAPE_ROW_SIZE, NON_LANDSCAPE_ROW_SIZE, type AspectToken } from "@/lib/row-rules"
-import { sanitizeImageDataLSB } from "@/lib/sanitize"
+import { sanitizeImageDataLSB, stripPngAncillaryChunks } from "@/lib/sanitize"
 import JSZip from "jszip"
 
 import {
@@ -484,7 +484,13 @@ export default function MosaicFilterApp() {
         canvas.toBlob((blob) => resolve(blob), "image/png")
       })
 
-      return sanitizedBlob ?? inputBlob
+      if (!sanitizedBlob) {
+        return inputBlob
+      }
+
+      const pngBytes = new Uint8Array(await sanitizedBlob.arrayBuffer())
+      const strippedPngBytes = stripPngAncillaryChunks(pngBytes)
+      return new Blob([strippedPngBytes], { type: "image/png" })
     },
     [],
   )
@@ -663,9 +669,7 @@ export default function MosaicFilterApp() {
 
         canvas.toBlob(async (blob) => {
           if (blob) {
-            const finalBlob = removeMetadataEnabled ? await sanitizeBlob(blob) : blob
-
-            const processedUrl = URL.createObjectURL(finalBlob)
+            const processedUrl = URL.createObjectURL(blob)
 
             updateImageStatus(image.id, "completed", processedUrl)
           } else {
@@ -680,7 +684,7 @@ export default function MosaicFilterApp() {
     }
 
     setIsProcessing(false)
-  }, [images, mosaicSize, applyMosaicFilter, updateImageStatus, removeMetadataEnabled, sanitizeBlob])
+  }, [images, mosaicSize, applyMosaicFilter, updateImageStatus])
 
   const fetchBlobFromObjectUrl = useCallback(async (url: string) => {
     const response = await fetch(url)
