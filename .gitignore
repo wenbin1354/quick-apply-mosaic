@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# development screenshots
+screenshot-*.png
+
+# test output images
+test_imgs/our_*.png
+test_imgs/tomato_*.png
+test_imgs/verify_*.png
+test_imgs/decoded_*.png

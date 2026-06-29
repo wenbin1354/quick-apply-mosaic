@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 
 import { Slider } from "@/components/ui/slider"
 import { buildDownloadFileName } from "@/lib/download"
-import { localeToHtmlLang, resolveInitialLocale, type Locale } from "@/lib/locale"
+import { localeToHtmlLang, type Locale } from "@/lib/locale"
 import { LANDSCAPE_ROW_SIZE, NON_LANDSCAPE_ROW_SIZE, type AspectToken } from "@/lib/row-rules"
 import { sanitizeImageDataLSB, stripPngAncillaryChunks } from "@/lib/sanitize"
 import JSZip from "jszip"
@@ -24,6 +24,7 @@ import {
   Download,
   Trash2,
   RotateCcw,
+  Undo2,
   Brush,
   CheckCircle,
   Clock,
@@ -266,9 +267,7 @@ interface DesktopRow {
   items: DesktopRowItem[]
 }
 
-export default function MosaicFilterApp() {
-  const [locale, setLocale] = useState<Locale>("en")
-
+export default function MosaicFilterApp({ locale, onLocaleChange }: { locale: Locale; onLocaleChange: (l: Locale) => void }) {
   const [images, setImages] = useState<ImageData[]>([])
 
   const [mosaicSize, setMosaicSize] = useState([10])
@@ -298,14 +297,16 @@ export default function MosaicFilterApp() {
   const text: UIText = translations[locale]
 
   useEffect(() => {
-    const savedLocale = window.localStorage.getItem("mosaic-locale")
-    setLocale(resolveInitialLocale(savedLocale, window.navigator.language))
-  }, [])
-
-  useEffect(() => {
-    window.localStorage.setItem("mosaic-locale", locale)
     document.documentElement.lang = localeToHtmlLang(locale)
   }, [locale])
+
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (images.length > 0) { e.preventDefault() }
+    }
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [images.length])
 
   useEffect(() => {
     const validIds = new Set(images.map((image) => image.id))
@@ -398,6 +399,7 @@ export default function MosaicFilterApp() {
   }, [])
 
   const clearAllImages = useCallback(() => {
+    if (images.length > 0 && !window.confirm(locale === "zh" ? "确定要清空全部图片吗？" : "Clear all images? This cannot be undone.")) return
     setHasClickedDownload(false)
 
     images.forEach((image) => {
@@ -411,7 +413,7 @@ export default function MosaicFilterApp() {
     setImages([])
 
     setProcessingProgress({ current: 0, total: 0 })
-  }, [images])
+  }, [images, locale])
 
   const moveImageUp = useCallback((id: string) => {
     setImages((prev) => {
@@ -959,7 +961,7 @@ export default function MosaicFilterApp() {
                 <select
                   id="locale-select"
                   value={locale}
-                  onChange={(e) => setLocale(e.target.value as Locale)}
+                  onChange={(e) => onLocaleChange(e.target.value as Locale)}
                   className="mt-1 w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
                 >
                   <option value="zh">{text.languageZh}</option>
@@ -1218,7 +1220,7 @@ export default function MosaicFilterApp() {
               <select
                 id="desktop-locale-select"
                 value={locale}
-                onChange={(e) => setLocale(e.target.value as Locale)}
+                onChange={(e) => onLocaleChange(e.target.value as Locale)}
                 className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
               >
                 <option value="zh">{text.languageZh}</option>
@@ -1561,7 +1563,7 @@ export default function MosaicFilterApp() {
                     <select
                       id="mobile-locale-select"
                       value={locale}
-                      onChange={(e) => setLocale(e.target.value as Locale)}
+                      onChange={(e) => onLocaleChange(e.target.value as Locale)}
                       className="mt-1 w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
                     >
                       <option value="zh">{text.languageZh}</option>
@@ -1673,6 +1675,10 @@ function ImageEditor({
 
   const canvasContainerRef = useRef<HTMLDivElement>(null)
 
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  const [isVisible, setIsVisible] = useState(false)
+
   const [isDrawing, setIsDrawing] = useState(false)
 
   const [currentStroke, setCurrentStroke] = useState<Point[]>([])
@@ -1688,6 +1694,17 @@ function ImageEditor({
   const [baseDimensions, setBaseDimensions] = useState<{ width: number; height: number } | null>(null)
 
   const hasEverLoadedRef = useRef(false)
+
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setIsVisible(true) },
+      { rootMargin: "200px" }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const sourceUrl = image.processedUrl || image.originalUrl
 
@@ -1712,6 +1729,7 @@ function ImageEditor({
   }, [])
 
   useEffect(() => {
+    if (!isVisible) return
     const img = new Image()
     img.onload = () => {
       setBaseDimensions({ width: img.width, height: img.height })
@@ -1765,17 +1783,25 @@ function ImageEditor({
       displayWidth = Math.max(1, Math.round(displayWidth))
       displayHeight = Math.max(1, Math.round(displayHeight))
 
-      canvas.width = displayWidth
+      const dpr = window.devicePixelRatio || 1
 
-      canvas.height = displayHeight
+      canvas.width = displayWidth * dpr
+      canvas.height = displayHeight * dpr
+      canvas.style.width = `${displayWidth}px`
+      canvas.style.height = `${displayHeight}px`
 
-      overlayCanvas.width = displayWidth
+      overlayCanvas.width = displayWidth * dpr
+      overlayCanvas.height = displayHeight * dpr
+      overlayCanvas.style.width = `${displayWidth}px`
+      overlayCanvas.style.height = `${displayHeight}px`
 
-      overlayCanvas.height = displayHeight
+      ctx.scale(dpr, dpr)
+
+      const overlayCtx = overlayCanvas.getContext("2d")
+      if (overlayCtx) overlayCtx.scale(dpr, dpr)
 
       setCanvasScale({
         x: sizingWidth / displayWidth,
-
         y: sizingHeight / displayHeight,
       })
 
@@ -1786,7 +1812,7 @@ function ImageEditor({
     }
 
     img.src = sourceUrl
-  }, [baseDimensions?.height, baseDimensions?.width, sourceUrl, zoom, containerWidth])
+  }, [isVisible, baseDimensions?.height, baseDimensions?.width, sourceUrl, zoom, containerWidth])
 
   const drawBrushStrokes = useCallback(
     (ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, imgWidth: number, imgHeight: number) => {
@@ -1851,14 +1877,17 @@ function ImageEditor({
       const overlayCtx = overlayCanvas.getContext("2d")
       if (!overlayCtx) return
 
-      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+      const dpr = window.devicePixelRatio || 1
+      const logicalW = overlayCanvas.width / dpr
+      const logicalH = overlayCanvas.height / dpr
+      overlayCtx.clearRect(0, 0, logicalW, logicalH)
 
       drawBrushStrokes(
         overlayCtx,
-        overlayCanvas.width,
-        overlayCanvas.height,
-        overlayCanvas.width * canvasScale.x,
-        overlayCanvas.height * canvasScale.y,
+        logicalW,
+        logicalH,
+        logicalW * canvasScale.x,
+        logicalH * canvasScale.y,
       )
 
       if (previewStroke && previewStroke.length > 0) {
@@ -1898,14 +1927,17 @@ function ImageEditor({
       const overlayCtx = overlayCanvas.getContext("2d")
       if (!overlayCtx) return
 
-      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+      const dpr = window.devicePixelRatio || 1
+      const logicalW = overlayCanvas.width / dpr
+      const logicalH = overlayCanvas.height / dpr
+      overlayCtx.clearRect(0, 0, logicalW, logicalH)
 
       drawBrushStrokes(
         overlayCtx,
-        overlayCanvas.width,
-        overlayCanvas.height,
-        overlayCanvas.width * canvasScale.x,
-        overlayCanvas.height * canvasScale.y,
+        logicalW,
+        logicalH,
+        logicalW * canvasScale.x,
+        logicalH * canvasScale.y,
       )
 
       overlayCtx.strokeStyle = "rgba(0, 255, 0, 0.8)"
@@ -1946,12 +1978,34 @@ function ImageEditor({
       }
 
       setCurrentStroke((prev) => {
-        const next = [...prev, actualPos]
+        if (prev.length === 0) {
+          const next = [actualPos]
+          drawOverlay(next)
+          return next
+        }
+        const last = prev[prev.length - 1]
+        const dx = actualPos.x - last.x
+        const dy = actualPos.y - last.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        const step = Math.max(brushSize * 0.3, 2)
+        const interpolated: Point[] = []
+        if (dist > step) {
+          const steps = Math.ceil(dist / step)
+          for (let i = 1; i <= steps; i++) {
+            interpolated.push({
+              x: last.x + (dx * i) / steps,
+              y: last.y + (dy * i) / steps,
+            })
+          }
+        } else {
+          interpolated.push(actualPos)
+        }
+        const next = [...prev, ...interpolated]
         drawOverlay(next)
         return next
       })
     },
-    [canvasScale.x, canvasScale.y, drawOverlay, getCanvasPos],
+    [brushSize, canvasScale.x, canvasScale.y, drawOverlay, getCanvasPos],
   )
 
   const handlePointerDown = useCallback(
@@ -2011,6 +2065,11 @@ function ImageEditor({
     }
   }, [drawOverlay, handleStrokeEnd, isDrawing])
 
+  const undoLastStroke = useCallback(() => {
+    if (image.brushStrokes.length === 0) return
+    onUpdateBrushStrokes(image.id, image.brushStrokes.slice(0, -1))
+  }, [image.id, image.brushStrokes, onUpdateBrushStrokes])
+
   const clearBrushStrokes = useCallback(() => {
     onUpdateBrushStrokes(image.id, [])
   }, [image.id, onUpdateBrushStrokes])
@@ -2057,7 +2116,7 @@ function ImageEditor({
     aspectType === "portrait" ? "md:h-[520px] md:max-h-[520px]" : "md:h-[420px] md:max-h-[420px]"
 
   return (
-    <Card className="h-full flex flex-col">
+    <Card ref={cardRef} className="h-full flex flex-col">
       <CardHeader className="pb-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:min-w-0">
           <div className="flex items-center gap-2 min-w-0 w-full sm:flex-1 sm:min-w-0 overflow-hidden">
@@ -2075,12 +2134,23 @@ function ImageEditor({
           </div>
 
           <div className="flex gap-1 flex-wrap justify-end shrink-0 w-full sm:w-auto sm:ml-2">
-            <Button size="sm" variant="outline" onClick={() => onMoveUp(image.id)} disabled={!canMoveUp} title={text.moveUp}>
+            <Button size="sm" variant="outline" onClick={() => onMoveUp(image.id)} disabled={!canMoveUp} title={text.moveUp} className="hidden sm:inline-flex">
               <ArrowUp className="w-3 h-3" />
             </Button>
 
-            <Button size="sm" variant="outline" onClick={() => onMoveDown(image.id)} disabled={!canMoveDown} title={text.moveDown}>
+            <Button size="sm" variant="outline" onClick={() => onMoveDown(image.id)} disabled={!canMoveDown} title={text.moveDown} className="hidden sm:inline-flex">
               <ArrowDown className="w-3 h-3" />
+            </Button>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={undoLastStroke}
+              disabled={image.brushStrokes.length === 0}
+              title="Undo"
+              className="min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0"
+            >
+              <Undo2 className="w-3 h-3" />
             </Button>
 
             <Button
@@ -2089,11 +2159,12 @@ function ImageEditor({
               onClick={clearBrushStrokes}
               disabled={image.brushStrokes.length === 0}
               title={text.clearStroke}
+              className="min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0"
             >
               <RotateCcw className="w-3 h-3" />
             </Button>
 
-            <Button size="sm" variant="outline" onClick={() => onRemove(image.id)} title={text.deleteImage}>
+            <Button size="sm" variant="outline" onClick={() => onRemove(image.id)} title={text.deleteImage} className="min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0">
               <Trash2 className="w-3 h-3" />
             </Button>
           </div>
